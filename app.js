@@ -35,19 +35,13 @@ app.post('/fetch', async (req, res) => {
     // Function to replace Yale with Fale while preserving case
     // Handles: YALE -> FALE, Yale -> Fale, yale -> fale
     function replaceYaleWithFalePreservingCase(text) {
-      // Special case: don't replace "Yale" in the phrase "no Yale references"
-      // Check if the text contains this phrase (case-insensitive, flexible whitespace)
-      if (/no\s+yale\s+references/i.test(text)) {
-        return text;
-      }
-      
-      // Use case-preserving replacement
+      // Use case-preserving replacement with special case handling
       return text.replace(/yale/gi, (match, offset, string) => {
-        // Check if this match is part of "no Yale references" phrase
-        // Look at context before and after the match
-        const before = string.substring(Math.max(0, offset - 10), offset).toLowerCase();
-        const after = string.substring(offset + match.length, Math.min(string.length, offset + match.length + 15)).toLowerCase();
-        if (before.includes('no') && after.includes('references')) {
+        // Special case: don't replace "Yale" in the phrase "no Yale references"
+        // Check context before and after the match
+        const before = string.substring(Math.max(0, offset - 10), offset).toLowerCase().trim();
+        const after = string.substring(offset + match.length, Math.min(string.length, offset + match.length + 15)).toLowerCase().trim();
+        if (before.endsWith('no') && after.startsWith('references')) {
           return match; // Don't replace if it's in the special phrase
         }
         
