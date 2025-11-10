@@ -9,21 +9,25 @@ const TEST_PORT = 3099;
 let serverPid = null;
 
 // Helper function to check if server is ready
-async function waitForServer(maxAttempts = 20, delay = 200) {
+async function waitForServer(maxAttempts = 30, delay = 300) {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const response = await axios.get(`http://localhost:${TEST_PORT}/`, {
-        timeout: 500,
+      // Use 127.0.0.1 directly to match nock's allowed connections
+      const response = await axios.get(`http://127.0.0.1:${TEST_PORT}/`, {
+        timeout: 1000,
         validateStatus: () => true // Accept any status code
       });
       // Server is responding
       return true;
     } catch (error) {
       // Server not ready yet, wait and retry
+      if (i === maxAttempts - 1) {
+        // Last attempt failed, throw with more details
+        throw new Error(`Server failed to start on port ${TEST_PORT} after ${maxAttempts} attempts. Last error: ${error.message}`);
+      }
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
-  throw new Error(`Server failed to start on port ${TEST_PORT} after ${maxAttempts} attempts`);
 }
 
 describe('Integration Tests', () => {
@@ -34,28 +38,69 @@ describe('Integration Tests', () => {
     nock.enableNetConnect('127.0.0.1');
     
     // Start the test server with PORT environment variable
+    // Don't use detached: true to avoid issues with process management
     const serverProcess = spawn('node', ['app.js'], {
-      detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'], // Capture stderr to see errors
       env: { ...process.env, PORT: TEST_PORT.toString() }
     });
     
     // Store only the PID to avoid circular reference issues with Jest workers
     serverPid = serverProcess.pid;
     
-    // Unref the process so it doesn't keep the parent alive
-    serverProcess.unref();
+    // Collect error output for debugging
+    let errorOutput = '';
+    let processExited = false;
+    let exitCode = null;
+    
+    serverProcess.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
+    
+    // Check if process exits early
+    serverProcess.on('exit', (code, signal) => {
+      processExited = true;
+      exitCode = code;
+    });
+    
+    // Unref the process so it doesn't keep the parent alive, but after a brief delay
+    // to ensure the server has started
+    setTimeout(() => {
+      serverProcess.unref();
+    }, 100);
     
     // Wait for server to be ready with health check
-    await waitForServer();
+    try {
+      await waitForServer();
+      // Check if process exited during startup
+      if (processExited && exitCode !== 0) {
+        throw new Error(`Server process exited with code ${exitCode} during startup. Error output: ${errorOutput}`);
+      }
+    } catch (error) {
+      // If server failed to start, include error output for debugging
+      if (processExited && exitCode !== 0) {
+        throw new Error(`Server process exited with code ${exitCode}. ${error.message}. Error output: ${errorOutput}`);
+      }
+      if (errorOutput) {
+        throw new Error(`${error.message}. Server errors: ${errorOutput}`);
+      }
+      throw error;
+    }
   }, 30000); // Increase timeout for server startup
 
   afterAll(async () => {
     // Kill the test server and clean up
     if (serverPid) {
       try {
-        // Kill the process group (negative PID kills the process group)
-        process.kill(-serverPid);
+        // Try to kill the process (not process group since we're not using detached)
+        process.kill(serverPid);
+        // Give it a moment to exit gracefully
+        await new Promise(resolve => setTimeout(resolve, 500));
+        // Force kill if still running
+        try {
+          process.kill(serverPid, 'SIGKILL');
+        } catch (error) {
+          // Process already dead, ignore
+        }
       } catch (error) {
         // Server may have already exited, ignore errors
       }
