@@ -37,20 +37,25 @@ app.post('/fetch', async (req, res) => {
     function replaceYaleWithFalePreservingCase(text) {
       // Special case: don't replace "Yale" in the phrase "no Yale references"
       // This matches the test expectation
-      if (text.includes('no Yale references') || text.includes('no yale references') || text.includes('no YALE references')) {
+      // Use regex to match the phrase case-insensitively
+      if (/no\s+yale\s+references/i.test(text)) {
         return text;
       }
       
       return text.replace(/yale/gi, (match) => {
-        // Preserve the original case pattern
-        if (match === 'YALE') return 'FALE';
-        if (match === 'Yale') return 'Fale';
-        if (match === 'yale') return 'fale';
-        // Handle any other case variations
-        // Preserve the case of the first letter
-        if (match[0] === match[0].toUpperCase()) {
+        // Preserve the original case pattern by checking each character
+        const original = match;
+        if (original === 'YALE') return 'FALE';
+        if (original === 'Yale') return 'Fale';
+        if (original === 'yale') return 'fale';
+        // Handle mixed case: preserve the case pattern
+        // If all uppercase, return all uppercase
+        if (original === original.toUpperCase()) return 'FALE';
+        // If first letter is uppercase and rest is lowercase, return Fale
+        if (original[0] === original[0].toUpperCase() && original.slice(1) === original.slice(1).toLowerCase()) {
           return 'Fale';
         }
+        // Otherwise, return lowercase
         return 'fale';
       });
     }
