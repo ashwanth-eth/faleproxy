@@ -6,7 +6,25 @@ const nock = require('nock');
 
 // Set a different port for testing to avoid conflict with the main app
 const TEST_PORT = 3099;
-let server;
+let serverPid = null;
+
+// Helper function to check if server is ready
+async function waitForServer(maxAttempts = 20, delay = 200) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const response = await axios.get(`http://localhost:${TEST_PORT}/`, {
+        timeout: 500,
+        validateStatus: () => true // Accept any status code
+      });
+      // Server is responding
+      return true;
+    } catch (error) {
+      // Server not ready yet, wait and retry
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw new Error(`Server failed to start on port ${TEST_PORT} after ${maxAttempts} attempts`);
+}
 
 describe('Integration Tests', () => {
   // Start the app server with a test port
@@ -16,24 +34,32 @@ describe('Integration Tests', () => {
     nock.enableNetConnect('127.0.0.1');
     
     // Start the test server with PORT environment variable
-    server = spawn('node', ['app.js'], {
+    const serverProcess = spawn('node', ['app.js'], {
       detached: true,
       stdio: 'ignore',
       env: { ...process.env, PORT: TEST_PORT.toString() }
     });
     
-    // Give the server time to start
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  }, 10000); // Increase timeout for server startup
+    // Store only the PID to avoid circular reference issues with Jest workers
+    serverPid = serverProcess.pid;
+    
+    // Unref the process so it doesn't keep the parent alive
+    serverProcess.unref();
+    
+    // Wait for server to be ready with health check
+    await waitForServer();
+  }, 30000); // Increase timeout for server startup
 
   afterAll(async () => {
     // Kill the test server and clean up
-    if (server && server.pid) {
+    if (serverPid) {
       try {
-        process.kill(-server.pid);
+        // Kill the process group (negative PID kills the process group)
+        process.kill(-serverPid);
       } catch (error) {
-        // Server may have already exited
+        // Server may have already exited, ignore errors
       }
+      serverPid = null;
     }
     nock.cleanAll();
     nock.enableNetConnect();
