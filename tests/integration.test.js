@@ -1,113 +1,27 @@
-const axios = require('axios');
+const request = require('supertest');
 const cheerio = require('cheerio');
-const { spawn } = require('child_process');
 const { sampleHtmlWithYale } = require('./test-utils');
 const nock = require('nock');
 
-// Set a different port for testing to avoid conflict with the main app
-const TEST_PORT = 3099;
-let serverPid = null;
-
-// Helper function to check if server is ready
-async function waitForServer(maxAttempts = 30, delay = 300) {
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      // Use 127.0.0.1 directly to match nock's allowed connections
-      const response = await axios.get(`http://127.0.0.1:${TEST_PORT}/`, {
-        timeout: 1000,
-        validateStatus: () => true // Accept any status code
-      });
-      // Server is responding
-      return true;
-    } catch (error) {
-      // Server not ready yet, wait and retry
-      if (i === maxAttempts - 1) {
-        // Last attempt failed, throw with more details
-        throw new Error(`Server failed to start on port ${TEST_PORT} after ${maxAttempts} attempts. Last error: ${error.message}`);
-      }
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-}
+// Import the app (but don't start the server - supertest will handle that)
+const app = require('../app');
 
 describe('Integration Tests', () => {
-  // Start the app server with a test port
-  beforeAll(async () => {
+  beforeAll(() => {
     // Mock external HTTP requests
     nock.disableNetConnect();
+    // Allow localhost for supertest
     nock.enableNetConnect('127.0.0.1');
-    
-    // Start the test server with PORT environment variable
-    // Don't use detached: true to avoid issues with process management
-    const serverProcess = spawn('node', ['app.js'], {
-      stdio: ['ignore', 'ignore', 'pipe'], // Capture stderr to see errors
-      env: { ...process.env, PORT: TEST_PORT.toString() }
-    });
-    
-    // Store only the PID to avoid circular reference issues with Jest workers
-    serverPid = serverProcess.pid;
-    
-    // Collect error output for debugging
-    let errorOutput = '';
-    let processExited = false;
-    let exitCode = null;
-    
-    serverProcess.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-    
-    // Check if process exits early
-    serverProcess.on('exit', (code, signal) => {
-      processExited = true;
-      exitCode = code;
-    });
-    
-    // Unref the process so it doesn't keep the parent alive, but after a brief delay
-    // to ensure the server has started
-    setTimeout(() => {
-      serverProcess.unref();
-    }, 100);
-    
-    // Wait for server to be ready with health check
-    try {
-      await waitForServer();
-      // Check if process exited during startup
-      if (processExited && exitCode !== 0) {
-        throw new Error(`Server process exited with code ${exitCode} during startup. Error output: ${errorOutput}`);
-      }
-    } catch (error) {
-      // If server failed to start, include error output for debugging
-      if (processExited && exitCode !== 0) {
-        throw new Error(`Server process exited with code ${exitCode}. ${error.message}. Error output: ${errorOutput}`);
-      }
-      if (errorOutput) {
-        throw new Error(`${error.message}. Server errors: ${errorOutput}`);
-      }
-      throw error;
-    }
-  }, 30000); // Increase timeout for server startup
+  });
 
-  afterAll(async () => {
-    // Kill the test server and clean up
-    if (serverPid) {
-      try {
-        // Try to kill the process (not process group since we're not using detached)
-        process.kill(serverPid);
-        // Give it a moment to exit gracefully
-        await new Promise(resolve => setTimeout(resolve, 500));
-        // Force kill if still running
-        try {
-          process.kill(serverPid, 'SIGKILL');
-        } catch (error) {
-          // Process already dead, ignore
-        }
-      } catch (error) {
-        // Server may have already exited, ignore errors
-      }
-      serverPid = null;
-    }
+  afterAll(() => {
     nock.cleanAll();
     nock.enableNetConnect();
+  });
+
+  afterEach(() => {
+    // Clear any lingering nock interceptors after each test
+    nock.cleanAll();
   });
 
   test('Should replace Yale with Fale in fetched content', async () => {
@@ -117,15 +31,15 @@ describe('Integration Tests', () => {
       .reply(200, sampleHtmlWithYale);
     
     // Make a request to our proxy app
-    const response = await axios.post(`http://localhost:${TEST_PORT}/fetch`, {
-      url: 'https://example.com/'
-    });
+    const response = await request(app)
+      .post('/fetch')
+      .send({ url: 'https://example.com/' });
     
     expect(response.status).toBe(200);
-    expect(response.data.success).toBe(true);
+    expect(response.body.success).toBe(true);
     
     // Verify Yale has been replaced with Fale in text
-    const $ = cheerio.load(response.data.content);
+    const $ = cheerio.load(response.body.content);
     expect($('title').text()).toBe('Fale University Test Page');
     expect($('h1').text()).toBe('Welcome to Fale University');
     expect($('p').first().text()).toContain('Fale University is a private');
@@ -143,28 +57,23 @@ describe('Integration Tests', () => {
     
     // Verify link text is changed
     expect($('a').first().text()).toBe('About Fale');
-  }, 10000); // Increase timeout for this test
+  });
 
   test('Should handle invalid URLs', async () => {
-    try {
-      await axios.post(`http://localhost:${TEST_PORT}/fetch`, {
-        url: 'not-a-valid-url'
-      });
-      // Should not reach here
-      expect(true).toBe(false);
-    } catch (error) {
-      expect(error.response.status).toBe(500);
-    }
+    const response = await request(app)
+      .post('/fetch')
+      .send({ url: 'not-a-valid-url' });
+    
+    expect(response.status).toBe(500);
+    expect(response.body.error).toContain('Failed to fetch content');
   });
 
   test('Should handle missing URL parameter', async () => {
-    try {
-      await axios.post(`http://localhost:${TEST_PORT}/fetch`, {});
-      // Should not reach here
-      expect(true).toBe(false);
-    } catch (error) {
-      expect(error.response.status).toBe(400);
-      expect(error.response.data.error).toBe('URL is required');
-    }
+    const response = await request(app)
+      .post('/fetch')
+      .send({});
+    
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('URL is required');
   });
 });

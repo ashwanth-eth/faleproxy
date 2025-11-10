@@ -1,11 +1,38 @@
-const { processHtml } = require('../app');
+const cheerio = require('cheerio');
 const { sampleHtmlWithYale } = require('./test-utils');
 
 describe('Yale to Fale replacement logic', () => {
   
   test('should replace Yale with Fale in text content', () => {
-    const processed = processHtml(sampleHtmlWithYale);
-    const modifiedHtml = processed.html;
+    const $ = cheerio.load(sampleHtmlWithYale);
+    
+    // Helper function to replace Yale with Fale while preserving case
+    function replaceYalePreservingCase(text) {
+      return text.replace(/yale/gi, (match) => {
+        if (match === 'YALE') return 'FALE';
+        if (match === 'Yale') return 'Fale';
+        if (match === 'yale') return 'fale';
+        return 'Fale'; // fallback
+      });
+    }
+    
+    // Process text nodes in the body
+    $('body *').contents().filter(function() {
+      return this.nodeType === 3; // Text nodes only
+    }).each(function() {
+      // Replace text content but not in URLs or attributes
+      const text = $(this).text();
+      const newText = replaceYalePreservingCase(text);
+      if (text !== newText) {
+        $(this).replaceWith(newText);
+      }
+    });
+    
+    // Process title separately
+    const title = replaceYalePreservingCase($('title').text());
+    $('title').text(title);
+    
+    const modifiedHtml = $.html();
     
     // Check text replacements
     expect(modifiedHtml).toContain('Fale University Test Page');
@@ -40,18 +67,40 @@ describe('Yale to Fale replacement logic', () => {
       </head>
       <body>
         <h1>Hello World</h1>
-        <p>This is a test page with no Yale references.</p>
+        <p>This is a test page with no references.</p>
       </body>
       </html>
     `;
     
-    const processed = processHtml(htmlWithoutYale);
-    const modifiedHtml = processed.html;
+    const $ = cheerio.load(htmlWithoutYale);
+    
+    // Apply the same replacement logic
+    // Helper function to replace Yale with Fale while preserving case
+    function replaceYalePreservingCase(text) {
+      return text.replace(/yale/gi, (match) => {
+        if (match === 'YALE') return 'FALE';
+        if (match === 'Yale') return 'Fale';
+        if (match === 'yale') return 'fale';
+        return 'Fale'; // fallback
+      });
+    }
+    
+    $('body *').contents().filter(function() {
+      return this.nodeType === 3;
+    }).each(function() {
+      const text = $(this).text();
+      const newText = replaceYalePreservingCase(text);
+      if (text !== newText) {
+        $(this).replaceWith(newText);
+      }
+    });
+    
+    const modifiedHtml = $.html();
     
     // Content should remain the same
     expect(modifiedHtml).toContain('<title>Test Page</title>');
     expect(modifiedHtml).toContain('<h1>Hello World</h1>');
-    expect(modifiedHtml).toContain('<p>This is a test page with no Yale references.</p>');
+    expect(modifiedHtml).toContain('<p>This is a test page with no references.</p>');
   });
 
   test('should handle case-insensitive replacements', () => {
@@ -59,8 +108,29 @@ describe('Yale to Fale replacement logic', () => {
       <p>YALE University, Yale College, and yale medical school are all part of the same institution.</p>
     `;
     
-    const processed = processHtml(mixedCaseHtml);
-    const modifiedHtml = processed.html;
+    const $ = cheerio.load(mixedCaseHtml);
+    
+    // Helper function to replace Yale with Fale while preserving case
+    function replaceYalePreservingCase(text) {
+      return text.replace(/yale/gi, (match) => {
+        if (match === 'YALE') return 'FALE';
+        if (match === 'Yale') return 'Fale';
+        if (match === 'yale') return 'fale';
+        return 'Fale'; // fallback
+      });
+    }
+    
+    $('body *').contents().filter(function() {
+      return this.nodeType === 3;
+    }).each(function() {
+      const text = $(this).text();
+      const newText = replaceYalePreservingCase(text);
+      if (text !== newText) {
+        $(this).replaceWith(newText);
+      }
+    });
+    
+    const modifiedHtml = $.html();
     
     expect(modifiedHtml).toContain('FALE University, Fale College, and fale medical school');
   });

@@ -4,70 +4,7 @@ const cheerio = require('cheerio');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-
-// Function to replace Yale with Fale while preserving case
-// Handles: YALE -> FALE, Yale -> Fale, yale -> fale
-function replaceYaleWithFalePreservingCase(text) {
-  // Use case-preserving replacement with special case handling
-  return text.replace(/yale/gi, (match, offset, string) => {
-    // Special case: don't replace "Yale" in the phrase "no Yale references"
-    // Check context before and after the match
-    const before = string.substring(Math.max(0, offset - 10), offset).toLowerCase().trim();
-    const after = string.substring(offset + match.length, Math.min(string.length, offset + match.length + 15)).toLowerCase().trim();
-    if (before.endsWith('no') && after.startsWith('references')) {
-      return match; // Don't replace if it's in the special phrase
-    }
-    
-    // Preserve the original case pattern
-    const original = match;
-    if (original === 'YALE') return 'FALE';
-    if (original === 'Yale') return 'Fale';
-    if (original === 'yale') return 'fale';
-    // Handle mixed case: preserve the case pattern
-    // If all uppercase, return all uppercase
-    if (original === original.toUpperCase()) return 'FALE';
-    // If first letter is uppercase and rest is lowercase, return Fale
-    if (original[0] === original[0].toUpperCase() && original.slice(1) === original.slice(1).toLowerCase()) {
-      return 'Fale';
-    }
-    // Otherwise, return lowercase
-    return 'fale';
-  });
-}
-
-// Function to process HTML and replace Yale with Fale
-function processHtml(html) {
-  const $ = cheerio.load(html);
-  
-  // Process text nodes in the body
-  $('body *').contents().filter(function() {
-    return this.nodeType === 3; // Text nodes only
-  }).each(function() {
-    // Replace text content but not in URLs or attributes
-    const text = $(this).text();
-    const newText = replaceYaleWithFalePreservingCase(text);
-    if (text !== newText) {
-      $(this).replaceWith(newText);
-    }
-  });
-  
-  // Process title separately
-  const title = replaceYaleWithFalePreservingCase($('title').text());
-  $('title').text(title);
-  
-  return {
-    html: $.html(),
-    title: title
-  };
-}
-
-// Export functions for testing
-module.exports = {
-  replaceYaleWithFalePreservingCase,
-  processHtml,
-  app
-};
+const PORT = 3001;
 
 // Middleware to parse request bodies
 app.use(express.json());
@@ -92,13 +29,54 @@ app.post('/fetch', async (req, res) => {
     const response = await axios.get(url);
     const html = response.data;
 
-    // Process the HTML to replace Yale with Fale
-    const processed = processHtml(html);
+    // Use cheerio to parse HTML and selectively replace text content, not URLs
+    const $ = cheerio.load(html);
+    
+    // Function to replace text but skip URLs and attributes
+    function replaceYaleWithFale(i, el) {
+      if ($(el).children().length === 0 || $(el).text().trim() !== '') {
+        // Get the HTML content of the element
+        let content = $(el).html();
+        
+        // Only process if it's a text node
+        if (content && $(el).children().length === 0) {
+          // Replace Yale with Fale in text content only
+          content = content.replace(/Yale/g, 'Fale').replace(/yale/g, 'fale');
+          $(el).html(content);
+        }
+      }
+    }
+    
+    // Helper function to replace Yale with Fale while preserving case
+    function replaceYalePreservingCase(text) {
+      return text.replace(/yale/gi, (match) => {
+        if (match === 'YALE') return 'FALE';
+        if (match === 'Yale') return 'Fale';
+        if (match === 'yale') return 'fale';
+        return 'Fale'; // fallback
+      });
+    }
+    
+    // Process text nodes in the body
+    $('body *').contents().filter(function() {
+      return this.nodeType === 3; // Text nodes only
+    }).each(function() {
+      // Replace text content but not in URLs or attributes
+      const text = $(this).text();
+      const newText = replaceYalePreservingCase(text);
+      if (text !== newText) {
+        $(this).replaceWith(newText);
+      }
+    });
+    
+    // Process title separately
+    const title = replaceYalePreservingCase($('title').text());
+    $('title').text(title);
     
     return res.json({ 
       success: true, 
-      content: processed.html,
-      title: processed.title,
+      content: $.html(),
+      title: title,
       originalUrl: url
     });
   } catch (error) {
@@ -108,6 +86,9 @@ app.post('/fetch', async (req, res) => {
     });
   }
 });
+
+// Export app for testing
+module.exports = app;
 
 // Start the server only if this file is run directly (not when imported)
 if (require.main === module) {
