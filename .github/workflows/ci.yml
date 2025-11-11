@@ -37,7 +37,8 @@ jobs:
         
   deploy:
     needs: test
-    if: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && needs.test.result == 'success' }}
+    # Only deploy on push to main/master branches when all tests pass (not on pull requests)
+    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     
     steps:
